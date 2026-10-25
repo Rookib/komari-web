@@ -1,7 +1,6 @@
 export type MetricTags = Record<string, string>;
 
 export type MetricTagged = {
-  tag?: MetricTags;
   tags?: MetricTags;
 };
 
@@ -35,6 +34,7 @@ export type QueryMetricsResponse = {
 
 export type PublicPingTask = {
   id: number;
+  weight?: number;
   name: string;
   type?: string;
   interval?: number;

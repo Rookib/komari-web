@@ -5,4 +5,5 @@ export interface MenuItem {
   children?: MenuItem[];
   newTab?: boolean;
   reloadDocument?: boolean;
+  bottom?: boolean;
 }

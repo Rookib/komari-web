@@ -1,8 +1,4 @@
-import {
-  quotePowerShellArg,
-  quoteShellArg,
-  quoteShellArgs,
-} from "@/utils/shellQuote";
+import { generateSafeAgentInstallCommand } from "@/utils/safeAgentInstall";
 import React, { useEffect, useState } from "react";
 import {
   NodeDetailsProvider,
@@ -18,7 +14,6 @@ import {
   Dialog,
   IconButton,
   TextArea,
-  SegmentedControl,
   Callout,
 } from "@radix-ui/themes";
 import {
@@ -118,7 +113,7 @@ const Layout = () => {
   const isEmpty = Array.isArray(nodeDetail) && nodeDetail.length === 0;
 
   return (
-    <Flex direction="column" gap="4" p="4">
+    <Flex direction="column" gap="4" p="4" className="km-page-admin-index">
       <Header
         searchTerm={searchTerm}
         setSearchTerm={setSearchTerm}
@@ -175,8 +170,6 @@ const EmptyNodesGuide = () => {
 };
 
 type AutoDiscoveryInstallOptions = {
-  disableWebSsh: boolean;
-  disableAutoUpdate: boolean;
   ignoreUnsafeCert: boolean;
   memoryIncludeCache: boolean;
   getIpAddrFromNic: boolean;
@@ -191,6 +184,7 @@ type AutoDiscoveryInstallOptions = {
   monthRotate: string;
 };
 
+
 const AutoDiscoverySection = ({
   settings,
   loading,
@@ -202,13 +196,9 @@ const AutoDiscoverySection = ({
   const adKey: string = settings?.auto_discovery_key || "";
   const enabled = Boolean(adKey);
 
-  const [selectedPlatform, setSelectedPlatform] =
-    React.useState<Platform>("linux");
   const [showOptions, setShowOptions] = React.useState(false);
   const [installOptions, setInstallOptions] =
     React.useState<AutoDiscoveryInstallOptions>({
-      disableWebSsh: false,
-      disableAutoUpdate: false,
       ignoreUnsafeCert: false,
       memoryIncludeCache: false,
       getIpAddrFromNic: false,
@@ -233,6 +223,7 @@ const AutoDiscoverySection = ({
     React.useState(false);
   const [enableInterval, setEnableInterval] = React.useState(false);
   const [enableMonthRotate, setEnableMonthRotate] = React.useState(false);
+
 
   const generateCommand = () => {
     const host = (function () {
@@ -259,12 +250,6 @@ const AutoDiscoverySection = ({
       "--ssh-auth-cooldown",
       "1800",
     ];
-    if (installOptions.disableWebSsh) {
-      args.push("--disable-web-ssh");
-    }
-    if (installOptions.disableAutoUpdate) {
-      args.push("--disable-auto-update");
-    }
     if (installOptions.ignoreUnsafeCert) {
       args.push("--ignore-unsafe-cert");
     }
@@ -327,79 +312,7 @@ const AutoDiscoverySection = ({
       args.push(rotateVal);
     }
 
-    let scriptFile = "install.sh";
-    if (selectedPlatform === "windows") {
-      scriptFile = "install.ps1";
-    }
-    let scriptUrl = `https://raw.githubusercontent.com/komari-monitor/komari-agent/refs/heads/main/${scriptFile}`;
-    if (enableGhproxy && ghproxy) {
-      scriptUrl = scriptUrl.slice(8); // 去掉 https://
-      if (ghproxy.endsWith("/")) {
-        scriptUrl = `${ghproxy}${scriptUrl}`;
-      } else {
-        scriptUrl = `${ghproxy}/${scriptUrl}`;
-      }
-      if (!scriptUrl.startsWith("http")) {
-        scriptUrl = `http://${scriptUrl}`;
-      }
-    }
-
-    let finalCommand = "";
-    switch (selectedPlatform) {
-      case "linux": {
-        const linuxScriptUrl = applyGithubProxy(
-          SAFE_AGENT_INSTALL_URL,
-          enableGhproxy ? ghproxy : "",
-        );
-        finalCommand =
-          `curl -fsSL ${quoteShellArg(linuxScriptUrl)} | sudo bash -s -- ` +
-          quoteShellArgs(args);
-        break;
-      }
-      case "windows":
-        finalCommand =
-          `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ` +
-          `"iwr ${quotePowerShellArg(scriptUrl)}` +
-          ` -UseBasicParsing -OutFile 'install.ps1'; &` +
-          ` '.\\install.ps1'`;
-        args.forEach((arg) => {
-          finalCommand += ` ${quotePowerShellArg(arg)}`;
-        });
-        finalCommand += `"`;
-        break;
-      case "macos":
-        finalCommand =
-          `zsh <(curl -sL ${quoteShellArg(scriptUrl)}) ` +
-          quoteShellArgs(args);
-        break;
-      case "docker": {
-        // Docker 运行时不支持安装脚本专用参数，剔除它们及其取值
-        const installOnlyFlags = [
-          "--install-ghproxy",
-          "--install-dir",
-          "--install-service-name",
-        ];
-        const dockerArgs: string[] = [];
-        for (let i = 0; i < args.length; i++) {
-          if (installOnlyFlags.includes(args[i])) {
-            i++; // 跳过该标志的取值
-            continue;
-          }
-          dockerArgs.push(args[i]);
-        }
-        // 自动发现会在 /app/auto-discovery.json 写入注册得到的 uuid/token，
-        // 通过 bind mount 持久化该文件，容器更新重建后复用同一身份，避免重复注册。
-        // 注意：文件挂载要求宿主机上文件已存在，否则 Docker 会将其创建为目录。
-        finalCommand =
-          `touch .komari-auto-discovery.json && ` +
-          `docker run -d --name komari-agent --restart=always ` +
-          `-v .komari-auto-discovery.json:/app/auto-discovery.json ` +
-          `ghcr.io/komari-monitor/komari-agent:latest ` +
-          quoteShellArgs(dockerArgs);
-        break;
-      }
-    }
-    return finalCommand;
+    return generateSafeAgentInstallCommand(args, enableGhproxy ? ghproxy : "");
   };
 
   const copyToClipboard = async (text: string) => {
@@ -468,15 +381,7 @@ const AutoDiscoverySection = ({
         </Text>
       </Flex>
 
-      <SegmentedControl.Root
-        value={selectedPlatform}
-        onValueChange={(value) => setSelectedPlatform(value as Platform)}
-      >
-        <SegmentedControl.Item value="linux">Linux</SegmentedControl.Item>
-        <SegmentedControl.Item value="windows">Windows</SegmentedControl.Item>
-        <SegmentedControl.Item value="macos">macOS</SegmentedControl.Item>
-        <SegmentedControl.Item value="docker">Docker</SegmentedControl.Item>
-      </SegmentedControl.Root>
+      <Text size="2" color="gray">{t("admin.nodeTable.safeLinuxOnly")}</Text>
 
       <Flex gap="2" align="center">
         <Checkbox
@@ -494,50 +399,8 @@ const AutoDiscoverySection = ({
       {showOptions && (
         <Flex direction="column" gap="2">
           <div className="grid grid-cols-2 gap-2">
-            <Flex gap="2" align="center">
-              <Checkbox
-                checked={installOptions.disableWebSsh}
-                onCheckedChange={(checked) =>
-                  setInstallOptions((prev) => ({
-                    ...prev,
-                    disableWebSsh: Boolean(checked),
-                  }))
-                }
-              />
-              <label
-                className="text-sm font-normal cursor-pointer"
-                onClick={() =>
-                  setInstallOptions((prev) => ({
-                    ...prev,
-                    disableWebSsh: !prev.disableWebSsh,
-                  }))
-                }
-              >
-                {t("admin.nodeTable.disableWebSsh")}
-              </label>
-            </Flex>
-            <Flex gap="2" align="center">
-              <Checkbox
-                checked={installOptions.disableAutoUpdate}
-                onCheckedChange={(checked) =>
-                  setInstallOptions((prev) => ({
-                    ...prev,
-                    disableAutoUpdate: Boolean(checked),
-                  }))
-                }
-              />
-              <label
-                className="text-sm font-normal cursor-pointer"
-                onClick={() =>
-                  setInstallOptions((prev) => ({
-                    ...prev,
-                    disableAutoUpdate: !prev.disableAutoUpdate,
-                  }))
-                }
-              >
-                {t("admin.nodeTable.disableAutoUpdate", "禁用自动更新")}
-              </label>
-            </Flex>
+
+
             <Flex gap="2" align="center">
               <Checkbox
                 checked={installOptions.ignoreUnsafeCert}
@@ -632,6 +495,9 @@ const AutoDiscoverySection = ({
           </div>
 
           <Flex direction="column" gap="2">
+
+
+
             <Flex gap="2" align="center">
               <Checkbox
                 checked={enableGhproxy}
@@ -973,7 +839,7 @@ const AutoDiscoverySection = ({
         onClick={() => copyToClipboard(generateCommand())}
       >
         <Copy size={16} />
-        {t("copy")}
+        {t("common.copy")}
       </Button>
     </Flex>
   );
@@ -1036,7 +902,7 @@ const Header = ({
         />
         <Dialog.Root open={dialogOpen} onOpenChange={setDialogOpen}>
           <Dialog.Trigger>
-            <Button onClick={() => setDialogOpen(true)}>
+            <Button data-guide="add-node" onClick={() => setDialogOpen(true)}>
               <Plus size={16} />
               {t("admin.nodeTable.addNode")}
             </Button>
@@ -1070,7 +936,7 @@ const SortableRow = ({
   node,
   selectedNodes,
   handleSelectNode,
-  settings
+  settings,
 }: {
   node: NodeDetail;
   selectedNodes: string[];
@@ -1197,7 +1063,10 @@ const SortableRow = ({
         />
       </TableCell>
       <TableCell>
-        <ActionButtons node={node} settings={settings} />
+        <ActionButtons
+          node={node}
+          settings={settings}
+        />
       </TableCell>
     </TableRow>
   );
@@ -1317,8 +1186,8 @@ const NodeTable = ({
                 />
               </TableHead>
               <TableHead>{t("admin.nodeTable.name")}</TableHead>
-              <TableHead>{t("admin.nodeTable.ipAddress")}</TableHead>
-              <TableHead>{t("admin.nodeTable.clientVersion")}</TableHead>
+              <TableHead>{t("admin.nodeDetail.ipAddress")}</TableHead>
+              <TableHead>{t("admin.nodeDetail.clientVersion")}</TableHead>
               <TableHead>{t("common.group")}</TableHead>
               <TableHead>{t("admin.nodeEdit.remark")}</TableHead>
               <TableHead>{t("admin.nodeTable.billing")}</TableHead>
@@ -1347,25 +1216,20 @@ const NodeTable = ({
   );
 };
 
-type Platform = "linux" | "windows" | "macos" | "docker";
-
-const SAFE_AGENT_INSTALL_URL =
-  "https://raw.githubusercontent.com/Rookib/tcpping/main/install.sh";
-
-function applyGithubProxy(url: string, ghproxy: string) {
-  const proxy = ghproxy.trim();
-  if (!proxy) return url;
-  const normalizedProxy = (
-    proxy.startsWith("http") ? proxy : `http://${proxy}`
-  ).replace(/\/+$/, "");
-  return `${normalizedProxy}/${url.replace(/^https?:\/\//, "")}`;
-}
-
-const ActionButtons = ({ node, settings }: { node: NodeDetail, settings: any }) => {
+const ActionButtons = ({
+  node,
+  settings,
+}: {
+  node: NodeDetail;
+  settings: any;
+}) => {
   const { t } = useTranslation();
   return (
     <div className="flex items-center gap-4">
-      <GenerateCommandButton node={node} settings={settings} />
+      <GenerateCommandButton
+        node={node}
+        settings={settings}
+      />
       <IconButton
         title={t("terminal.title")}
         variant="ghost"
@@ -1408,21 +1272,21 @@ function DeleteButton({ node }: { node: NodeDetail }) {
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Trigger>
-        <IconButton variant="ghost" color="red" title={t("delete")}>
+        <IconButton variant="ghost" color="red" title={t("common.delete")}>
           <Trash2Icon size="18" />
         </IconButton>
       </Dialog.Trigger>
       <Dialog.Content>
-        <Dialog.Title>{t("delete")}</Dialog.Title>
+        <Dialog.Title>{t("common.delete")}</Dialog.Title>
         <Dialog.Description>
-          {t("admin.nodeTable.confirmDelete")}
+          {t("common.confirm_delete")}
         </Dialog.Description>
         <Flex justify="end" gap="2" mt="4">
           <Dialog.Trigger>
-            <Button variant="soft">{t("admin.nodeTable.cancel")}</Button>
+            <Button variant="soft">{t("common.cancel")}</Button>
           </Dialog.Trigger>
           <Button disabled={deleting} color="red" onClick={handleDelete}>
-            {t("admin.nodeTable.confirmDelete")}
+            {t("common.confirm_delete")}
           </Button>
         </Flex>
       </Dialog.Content>
@@ -1430,8 +1294,6 @@ function DeleteButton({ node }: { node: NodeDetail }) {
   );
 }
 type InstallOptions = {
-  disableWebSsh: boolean;
-  disableAutoUpdate: boolean;
   ignoreUnsafeCert: boolean;
   memoryIncludeCache: boolean;
   getIpAddrFromNic: boolean;
@@ -1445,12 +1307,14 @@ type InstallOptions = {
   interval: string;
   monthRotate: string;
 };
-function GenerateCommandButton({ node, settings }: { node: NodeDetail, settings: any }) {
-  const [selectedPlatform, setSelectedPlatform] =
-    React.useState<Platform>("linux");
+function GenerateCommandButton({
+  node,
+  settings,
+}: {
+  node: NodeDetail;
+  settings: any;
+}) {
   const [installOptions, setInstallOptions] = React.useState<InstallOptions>({
-    disableWebSsh: false,
-    disableAutoUpdate: false,
     ignoreUnsafeCert: false,
     memoryIncludeCache: false,
     getIpAddrFromNic: false,
@@ -1475,6 +1339,7 @@ function GenerateCommandButton({ node, settings }: { node: NodeDetail, settings:
     React.useState(false);
   const [enableInterval, setEnableInterval] = React.useState(false);
   const [enableMonthRotate, setEnableMonthRotate] = React.useState(false);
+
 
   const generateCommand = () => {
     const host = function () {
@@ -1503,12 +1368,6 @@ function GenerateCommandButton({ node, settings }: { node: NodeDetail, settings:
       "1800",
     ];
     // 根据安装选项生成参数
-    if (installOptions.disableWebSsh) {
-      args.push("--disable-web-ssh");
-    }
-    if (installOptions.disableAutoUpdate) {
-      args.push("--disable-auto-update");
-    }
     if (installOptions.ignoreUnsafeCert) {
       args.push("--ignore-unsafe-cert");
     }
@@ -1566,75 +1425,7 @@ function GenerateCommandButton({ node, settings }: { node: NodeDetail, settings:
       args.push(`--month-rotate`);
       args.push(rotateVal);
     }
-    let scriptFile = "install.sh";
-    if (selectedPlatform === "windows") {
-      scriptFile = "install.ps1";
-    }
-    let scriptUrl =
-      `https://raw.githubusercontent.com/komari-monitor/komari-agent/refs/heads/main/${scriptFile}`;
-    if (enableGhproxy) {
-      if (enableGhproxy && ghproxy) {
-        scriptUrl = scriptUrl.slice(8); // 去掉 https://
-        if (ghproxy.endsWith("/")) {
-          scriptUrl = `${ghproxy}${scriptUrl}`;
-        } else {
-          scriptUrl = `${ghproxy}/${scriptUrl}`;
-        }
-        if (!scriptUrl.startsWith("http")) {
-          scriptUrl = `http://${scriptUrl}`;
-        }
-      }
-    }
-    let finalCommand = "";
-    switch (selectedPlatform) {
-      case "linux": {
-        const linuxScriptUrl = applyGithubProxy(
-          SAFE_AGENT_INSTALL_URL,
-          enableGhproxy ? ghproxy : "",
-        );
-        finalCommand =
-          `curl -fsSL ${quoteShellArg(linuxScriptUrl)} | sudo bash -s -- ` +
-          quoteShellArgs(args);
-        break;
-      }
-      case "windows":
-        finalCommand =
-          `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ` +
-          `"iwr ${quotePowerShellArg(scriptUrl)}` +
-          ` -UseBasicParsing -OutFile 'install.ps1'; &` +
-          ` '.\\install.ps1'`;
-        args.forEach((arg) => {
-          finalCommand += ` ${quotePowerShellArg(arg)}`;
-        });
-        finalCommand += `"`;
-        break;
-      case "macos":
-        finalCommand =
-          `zsh <(curl -sL ${quoteShellArg(scriptUrl)}) ` + quoteShellArgs(args);
-        break;
-      case "docker": {
-        // Docker 运行时不支持安装脚本专用参数，剔除它们及其取值
-        const installOnlyFlags = [
-          "--install-ghproxy",
-          "--install-dir",
-          "--install-service-name",
-        ];
-        const dockerArgs: string[] = [];
-        for (let i = 0; i < args.length; i++) {
-          if (installOnlyFlags.includes(args[i])) {
-            i++; // 跳过该标志的取值
-            continue;
-          }
-          dockerArgs.push(args[i]);
-        }
-        finalCommand =
-          `docker run -d --name komari-agent --restart=always ` +
-          `ghcr.io/komari-monitor/komari-agent:latest ` +
-          quoteShellArgs(dockerArgs);
-        break;
-      }
-    }
-    return finalCommand;
+    return generateSafeAgentInstallCommand(args, enableGhproxy ? ghproxy : "");
   };
 
   const copyToClipboard = async (text: string) => {
@@ -1658,67 +1449,15 @@ function GenerateCommandButton({ node, settings }: { node: NodeDetail, settings:
           {t("admin.nodeTable.installCommand", "一键部署指令")}
         </Dialog.Title>
         <div className="flex flex-col gap-4">
-          <SegmentedControl.Root
-            value={selectedPlatform}
-            onValueChange={(value) => setSelectedPlatform(value as Platform)}
-          >
-            <SegmentedControl.Item value="linux">Linux</SegmentedControl.Item>
-            <SegmentedControl.Item value="windows">
-              Windows
-            </SegmentedControl.Item>
-            <SegmentedControl.Item value="macos">macOS</SegmentedControl.Item>
-            <SegmentedControl.Item value="docker">Docker</SegmentedControl.Item>
-          </SegmentedControl.Root>
+      <Text size="2" color="gray">{t("admin.nodeTable.safeLinuxOnly")}</Text>
 
           <Flex direction="column" gap="2">
             <label className="text-base font-bold">
               {t("admin.nodeTable.installOptions", "安装选项")}
             </label>
             <div className="grid grid-cols-2 gap-2">
-              <Flex gap="2" align="center">
-                <Checkbox
-                  checked={installOptions.disableWebSsh}
-                  onCheckedChange={(checked) => {
-                    setInstallOptions((prev) => ({
-                      ...prev,
-                      disableWebSsh: Boolean(checked),
-                    }));
-                  }}
-                />
-                <label
-                  className="text-sm font-normal"
-                  onClick={() => {
-                    setInstallOptions((prev) => ({
-                      ...prev,
-                      disableWebSsh: !prev.disableWebSsh,
-                    }));
-                  }}
-                >
-                  {t("admin.nodeTable.disableWebSsh")}
-                </label>
-              </Flex>
-              <Flex gap="2" align="center">
-                <Checkbox
-                  checked={installOptions.disableAutoUpdate}
-                  onCheckedChange={(checked) => {
-                    setInstallOptions((prev) => ({
-                      ...prev,
-                      disableAutoUpdate: Boolean(checked),
-                    }));
-                  }}
-                ></Checkbox>
-                <label
-                  className="text-sm font-normal"
-                  onClick={() => {
-                    setInstallOptions((prev) => ({
-                      ...prev,
-                      disableAutoUpdate: !prev.disableAutoUpdate,
-                    }));
-                  }}
-                >
-                  {t("admin.nodeTable.disableAutoUpdate", "禁用自动更新")}
-                </label>
-              </Flex>
+
+
               <Flex gap="2" align="center">
                 <Checkbox
                   checked={installOptions.ignoreUnsafeCert}
@@ -1812,6 +1551,9 @@ function GenerateCommandButton({ node, settings }: { node: NodeDetail, settings:
               </Flex>
             </div>
             <Flex direction="column" gap="2">
+
+
+
               <Flex gap="2" align="center">
                 <Checkbox
                   checked={enableGhproxy}
@@ -2207,7 +1949,7 @@ function GenerateCommandButton({ node, settings }: { node: NodeDetail, settings:
               onClick={() => copyToClipboard(generateCommand())}
             >
               <Copy size={16} />
-              {t("copy")}
+              {t("common.copy")}
             </Button>
           </Flex>
         </div>
@@ -2229,17 +1971,30 @@ function EditButton({ node }: { node: NodeDetail }) {
   const [saving, setSaving] = useState(false);
   const [traffic_limit, setTrafficLimit] = useState(0);
   const [traffic_limit_type, setTrafficLimitType] = useState("sum");
+  const [trafficLimitInput, setTrafficLimitInput] = useState("0 B");
+  const [trafficLimitInvalid, setTrafficLimitInvalid] = useState(false);
 
   React.useEffect(() => {
     setHidden(node.hidden);
     setTrafficLimit(node.traffic_limit || 0);
     setTrafficLimitType(node.traffic_limit_type || "sum");
+    setTrafficLimitInput(formatBytes(node.traffic_limit || 0));
+    setTrafficLimitInvalid(false);
   }, [node.hidden, node.traffic_limit, node.traffic_limit_type]);
 
   const save = async () => {
+    if (trafficLimitInvalid) {
+      toast.error(
+        t(
+          "admin.nodeEdit.trafficLimitInvalidSave",
+          "流量阈值格式无法解析，请先修正"
+        )
+      );
+      return;
+    }
     try {
       setSaving(true);
-      await fetch(`/api/admin/client/${node.uuid}/edit`, {
+      const res = await fetch(`/api/admin/client/${node.uuid}/edit`, {
         method: "POST",
         body: JSON.stringify({
           name: nameRef.current?.value,
@@ -2255,11 +2010,15 @@ function EditButton({ node }: { node: NodeDetail }) {
           "Content-Type": "application/json",
         },
       });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
       refresh();
       setOpen(false);
       toast.success(t("admin.nodeEdit.saveSuccess", "保存成功"));
     } catch (error) {
       console.error("Error updating client:", error);
+      toast.error(t("admin.nodeEdit.saveError", "保存失败"));
     } finally {
       setSaving(false);
     }
@@ -2388,15 +2147,36 @@ function EditButton({ node }: { node: NodeDetail }) {
               bordless
               title={t("admin.nodeEdit.trafficLimit")}
               description={t("admin.nodeEdit.trafficLimit_description")}
-              defaultValue={formatBytes(traffic_limit || 0)}
+              value={trafficLimitInput}
               showSaveButton={false}
               onChange={(e) => {
-                setTrafficLimit(stringToBytes(e.currentTarget.value));
+                const raw = e.currentTarget.value;
+                setTrafficLimitInput(raw);
+                const bytes = stringToBytes(raw);
+                if (bytes === null) {
+                  // 解析失败：标记错误，保留原值与用户输入，不静默置 0
+                  setTrafficLimitInvalid(true);
+                } else {
+                  setTrafficLimitInvalid(false);
+                  setTrafficLimit(bytes);
+                }
               }}
-              onBlur={(e) => {
-                e.currentTarget.value = formatBytes(traffic_limit);
+              onBlur={() => {
+                // 仅在解析成功时规范显示；解析失败时保留原始输入供用户修正
+                if (!trafficLimitInvalid) {
+                  setTrafficLimitInput(formatBytes(traffic_limit));
+                }
               }}
-            ></SettingCardShortTextInput>
+            >
+              {trafficLimitInvalid ? (
+                <span className="mt-1 text-sm text-red-500">
+                  {t(
+                    "admin.nodeEdit.trafficLimitInvalid",
+                    "无法解析该数值，支持如 100 GB / 512 MiB / 2T（最大 PB）"
+                  )}
+                </span>
+              ) : null}
+            </SettingCardShortTextInput>
           </SettingCardCollapse>
         </div>
         <Flex gap="2" justify={"end"} className="mt-4">
@@ -2408,7 +2188,7 @@ function EditButton({ node }: { node: NodeDetail }) {
           >
             {saving
               ? t("admin.nodeEdit.waiting", "等待...")
-              : t("save", "保存")}
+              : t("common.save", "保存")}
           </Button>
         </Flex>
       </Dialog.Content>
@@ -2681,6 +2461,9 @@ function BillingButton({ node }: { node: NodeDetail }) {
         (formData.get("billingCycle") as string) || "30"
       );
       const expiredAtValue = (formData.get("expiredAt") as string) || "";
+      const expiredAt = expiredAtValue
+        ? new Date(`${expiredAtValue}T00:00:00Z`).toISOString()
+        : null;
       const currencyValue = (formData.get("currency") as string) || "$";
 
       await fetch(`/api/admin/client/${node.uuid}/edit`, {
@@ -2688,7 +2471,7 @@ function BillingButton({ node }: { node: NodeDetail }) {
         body: JSON.stringify({
           price,
           billing_cycle: billingCycleValue,
-          expired_at: expiredAtValue,
+          expired_at: expiredAt,
           currency: currencyValue,
           auto_renewal: autoRenewal,
         }),
@@ -2800,7 +2583,7 @@ function BillingButton({ node }: { node: NodeDetail }) {
               onChange={setAutoRenewal}
             />
             <Button type="submit" disabled={saving}>
-              {t("save")}
+              {t("common.save")}
             </Button>
           </Flex>
         </form>

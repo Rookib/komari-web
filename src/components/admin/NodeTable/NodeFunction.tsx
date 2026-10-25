@@ -6,18 +6,14 @@ import { Terminal, Trash2, Copy, Download, DollarSign } from "lucide-react";
 import { t } from "i18next";
 import type { Row } from "@tanstack/react-table";
 import { EditDialog } from "./NodeEditDialog";
-import {
-  quotePowerShellArg,
-  quoteShellArg,
-  quoteShellArgs,
-} from "@/utils/shellQuote";
+import { generateSafeAgentInstallCommand } from "@/utils/safeAgentInstall";
 import {
   Button,
   Checkbox,
   Dialog,
   Flex,
   IconButton,
-  SegmentedControl,
+  Text,
   TextArea,
   TextField,
 } from "@radix-ui/themes";
@@ -30,27 +26,17 @@ async function removeClient(uuid: string) {
 }
 
 type InstallOptions = {
-  disableWebSsh: boolean;
-  disableAutoUpdate: boolean;
   ignoreUnsafeCert: boolean;
   ghproxy: string;
   dir: string;
   serviceName: string;
 };
 
-type Platform = "linux" | "windows" | "macos";
-
-const SAFE_AGENT_INSTALL_URL =
-  "https://raw.githubusercontent.com/Rookib/tcpping/main/install.sh";
 
 export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
   const refreshTable = React.useContext(DataTableRefreshContext);
   const [removing, setRemoving] = React.useState(false);
-  const [selectedPlatform, setSelectedPlatform] =
-    React.useState<Platform>("linux");
   const [installOptions, setInstallOptions] = React.useState<InstallOptions>({
-    disableWebSsh: false,
-    disableAutoUpdate: false,
     ignoreUnsafeCert: false,
     ghproxy: "",
     dir: "",
@@ -76,12 +62,6 @@ export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
       "1800",
     ];
     // 根据安装选项生成参数
-    if (installOptions.disableWebSsh) {
-      args.push("--disable-web-ssh");
-    }
-    if (installOptions.disableAutoUpdate) {
-      args.push("--disable-auto-update");
-    }
     if (installOptions.ignoreUnsafeCert) {
       args.push("--ignore-unsafe-cert");
     }
@@ -104,32 +84,7 @@ export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
       args.push(serviceName);
     }
 
-    let finalCommand = "";
-    switch (selectedPlatform) {
-      case "linux": {
-        finalCommand =
-          `curl -fsSL ${quoteShellArg(SAFE_AGENT_INSTALL_URL)} | sudo bash -s -- ` +
-          quoteShellArgs(args);
-        break;
-      }
-      case "windows":
-        finalCommand =
-          `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ` +
-          `"iwr 'https://raw.githubusercontent.com/komari-monitor/komari-agent/refs/heads/main/install.ps1'` +
-          ` -UseBasicParsing -OutFile 'install.ps1'; &` +
-          ` '.\\install.ps1'`;
-        args.forEach((arg) => {
-          finalCommand += ` ${quotePowerShellArg(arg)}`;
-        });
-        finalCommand += `"`;
-        break;
-      case "macos":
-        finalCommand =
-          `zsh <(curl -sL https://raw.githubusercontent.com/komari-monitor/komari-agent/refs/heads/main/install.sh) ` +
-          quoteShellArgs(args);
-        break;
-    }
-    return finalCommand;
+    return generateSafeAgentInstallCommand(args, ghproxy);
   };
 
   const copyToClipboard = async (text: string) => {
@@ -142,10 +97,14 @@ export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
   };
 
   return (
-    <div className="flex gap-3 justify-center">
+    <div className="km-node-function flex gap-3 justify-center">
       <Dialog.Root>
         <Dialog.Trigger>
-          <IconButton variant="ghost">
+          <IconButton
+            variant="ghost"
+            title={t("admin.nodeTable.installCommand", "Install command")}
+            aria-label={t("admin.nodeTable.installCommand", "Install command")}
+          >
             <Download className="p-1" />
           </IconButton>
         </Dialog.Trigger>
@@ -154,66 +113,13 @@ export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
             {t("admin.nodeTable.installCommand", "一键部署指令")}
           </Dialog.Title>
           <div className="flex flex-col gap-4">
-            <SegmentedControl.Root
-              value={selectedPlatform}
-              onValueChange={(value) => setSelectedPlatform(value as Platform)}
-            >
-              <SegmentedControl.Item value="linux">Linux</SegmentedControl.Item>
-              <SegmentedControl.Item value="windows">
-                Windows
-              </SegmentedControl.Item>
-              <SegmentedControl.Item value="macos">macOS</SegmentedControl.Item>
-            </SegmentedControl.Root>
+            <Text size="2" color="gray">{t("admin.nodeTable.safeLinuxOnly")}</Text>
 
             <Flex direction="column" gap="2">
               <label className="text-base font-bold">
                 {t("admin.nodeTable.installOptions", "安装选项")}
               </label>
               <div className="grid grid-cols-2 gap-2">
-                <Flex gap="2">
-                  <Checkbox
-                    checked={installOptions.disableWebSsh}
-                    onCheckedChange={(checked) => {
-                      setInstallOptions((prev) => ({
-                        ...prev,
-                        disableWebSsh: Boolean(checked),
-                      }));
-                    }}
-                  />
-                  <label
-                    className="text-sm font-normal"
-                    onClick={() => {
-                      setInstallOptions((prev) => ({
-                        ...prev,
-                        disableWebSsh: !prev.disableWebSsh,
-                      }));
-                    }}
-                  >
-                    {t("admin.nodeTable.disableWebSsh", "禁用 WebSSH")}
-                  </label>
-                </Flex>
-                <Flex gap="2">
-                  <Checkbox
-                    checked={installOptions.disableAutoUpdate}
-                    onCheckedChange={(checked) => {
-                      setInstallOptions((prev) => ({
-                        ...prev,
-                        disableAutoUpdate: Boolean(checked),
-                      }));
-                    }}
-                  ></Checkbox>
-                  <label
-                    className="text-sm font-normal"
-                    onClick={() => {
-                      setInstallOptions((prev) => ({
-                        ...prev,
-                        disableAutoUpdate: !prev.disableAutoUpdate,
-                      }));
-                    }}
-                  >
-                    {t("admin.nodeTable.disableAutoUpdate", "禁用自动更新")}
-                  </label>
-                </Flex>
                 <Flex gap="2">
                   <Checkbox
                     checked={installOptions.ignoreUnsafeCert}
@@ -304,14 +210,18 @@ export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
                 onClick={() => copyToClipboard(generateCommand())}
               >
                 <Copy size={16} />
-                {t("copy")}
+                {t("common.copy")}
               </Button>
             </Flex>
           </div>
         </Dialog.Content>
       </Dialog.Root>
       <a href={`/terminal?uuid=${row.original.uuid}`} target="_blank">
-        <IconButton variant="ghost">
+        <IconButton
+          variant="ghost"
+          title={t("terminal.title", "Terminal")}
+          aria-label={t("terminal.title", "Terminal")}
+        >
           <Terminal className="p-1" />
         </IconButton>
       </a>
@@ -320,7 +230,11 @@ export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
       {/** Edit Money */}
       <Dialog.Root> 
         <Dialog.Trigger>
-          <IconButton variant="ghost">
+          <IconButton
+            variant="ghost"
+            title={t("admin.nodeTable.editNodePrice", "Edit Price")}
+            aria-label={t("admin.nodeTable.editNodePrice", "Edit Price")}
+          >
            <DollarSign className="p-1" />
           </IconButton>
         </Dialog.Trigger>
@@ -334,18 +248,24 @@ export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
       {/** Delete Button */}
       <Dialog.Root>
         <Dialog.Trigger>
-          <IconButton variant="ghost" color="red" className="text-destructive">
+          <IconButton
+            variant="ghost"
+            color="red"
+            className="text-destructive"
+            title={t("common.delete", "Delete")}
+            aria-label={t("common.delete", "Delete")}
+          >
             <Trash2 className="p-1" />
           </IconButton>
         </Dialog.Trigger>
         <Dialog.Content>
-          <Dialog.Title>{t("admin.nodeTable.confirmDelete")}</Dialog.Title>
+          <Dialog.Title>{t("common.confirm_delete")}</Dialog.Title>
           <Dialog.Description>
             {t("admin.nodeTable.cannotUndo")}
           </Dialog.Description>
           <Flex gap="2" justify={"end"}>
             <Dialog.Close>
-              <Button variant="soft">{t("admin.nodeTable.cancel")}</Button>
+              <Button variant="soft">{t("common.cancel")}</Button>
             </Dialog.Close>
             <Dialog.Trigger>
               <Button
@@ -360,7 +280,7 @@ export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
               >
                 {removing
                   ? t("admin.nodeTable.deleting")
-                  : t("admin.nodeTable.confirm")}
+                  : t("common.confirm")}
               </Button>
             </Dialog.Trigger>
           </Flex>

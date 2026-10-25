@@ -1,17 +1,17 @@
 const shellUnsafePattern = /[\s"'\\$`!#&*();<>?[\]^{|}~]/;
 
 export function quoteShellArg(value: string) {
-  const trimmedValue = value.trim();
+  const argument = value;
 
-  if (trimmedValue === "") {
+  if (argument === "") {
     return "''";
   }
 
-  if (!shellUnsafePattern.test(trimmedValue)) {
-    return trimmedValue;
+  if (!shellUnsafePattern.test(argument)) {
+    return argument;
   }
 
-  return `'${trimmedValue.replace(/'/g, `'\\''`)}'`;
+  return `'${argument.replace(/'/g, `'\\''`)}'`;
 }
 
 export function quoteShellArgs(args: string[]) {
