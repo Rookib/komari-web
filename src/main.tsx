@@ -27,6 +27,12 @@ import { Toaster } from "./components/ui/sonner";
 import { RPC2Provider } from "./contexts/RPC2Context";
 import { NodeListProvider } from "./contexts/NodeListContext";
 const App = () => {
+  const restrictedPath = window.location.pathname.replace(/\/$/, "");
+  const isRestrictedGuideRoute = [
+    "/admin/database-migration",
+    "/install",
+    "/database-recovery",
+  ].includes(restrictedPath);
   React.useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tempKey = params.get("temp_key");
@@ -81,17 +87,24 @@ const App = () => {
             minHeight: "100vh",
           }}
         >
-          <RPC2Provider>
-            <PublicInfoProvider>
-              <NodeListProvider>
-                <Toaster />
-                <OfflineIndicator />
-                {routing}
-                <PWAInstallPrompt />
-                <PWAUpdatePrompt />
-              </NodeListProvider>
-            </PublicInfoProvider>
-          </RPC2Provider>
+          {isRestrictedGuideRoute ? (
+            <>
+              <Toaster />
+              {routing}
+            </>
+          ) : (
+            <RPC2Provider>
+              <PublicInfoProvider>
+                <NodeListProvider>
+                  <Toaster />
+                  <OfflineIndicator />
+                  {routing}
+                  <PWAInstallPrompt />
+                  <PWAUpdatePrompt />
+                </NodeListProvider>
+              </PublicInfoProvider>
+            </RPC2Provider>
+          )}
         </Theme>
       </ThemeContext.Provider>
     </Suspense>

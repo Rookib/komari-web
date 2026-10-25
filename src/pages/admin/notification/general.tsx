@@ -11,7 +11,7 @@ import {
 import { toast } from "sonner";
 const GeneralNotification = () => {
   return (
-    <Flex direction="column" gap="3" className="p-0 md:p-4">
+    <Flex direction="column" gap="3" className="km-page-admin-notification-general km-notification-general-form p-0 md:p-4">
       <Inner />
     </Flex>
   );
@@ -59,6 +59,14 @@ const Inner = () => {
             { expire_notification_lead_days: numValue },
             t
           );
+        }}
+      />
+      <SettingCardSwitch
+        title={t("settings.notification.ssh_auth_guard_silent_mode")}
+        description={t("settings.notification.ssh_auth_guard_silent_mode_description")}
+        defaultChecked={settings.ssh_auth_guard_silent_mode}
+        onChange={async (checked) => {
+          await updateSettingsWithToast({ ssh_auth_guard_silent_mode: checked }, t);
         }}
       />
       <SettingCardLabel>{t("admin.notification.login")}</SettingCardLabel>

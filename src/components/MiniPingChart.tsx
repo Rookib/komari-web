@@ -25,6 +25,7 @@ import type {
 import {
   PING_LATENCY_METRIC,
   applyMetricEwma,
+  comparePingTaskOrder,
   formatRemainingTags,
   metricChartBoundaryTicks,
   metricSeriesColor,
@@ -35,6 +36,7 @@ import {
   pingMetricStatKey,
   pingTaskId,
   pingTaskName,
+  trimMetricChartBoundaryRows,
   type MetricChartRow,
 } from "@/utils/metricSeries";
 
@@ -44,6 +46,7 @@ type RenderSeries = {
   taskId?: string;
   name: string;
   color: string;
+  pointCount: number;
   tags?: MetricTags;
 };
 
@@ -83,16 +86,15 @@ const MiniPingChart = ({
     setError(null);
     setHiddenLines({});
 
-    const taskRequest = call<unknown, PublicPingTask[]>("public:getPublicPingTasks").catch(
-      () => [],
-    );
+    const taskRequest = call<unknown, PublicPingTask[]>(
+      "public:getPublicPingTasks",
+    ).catch(() => []);
     const metricRequest = call<unknown, QueryMetricsResponse>(
       "public:queryMetrics",
       {
         metric_keys: [PING_LATENCY_METRIC],
         entity_id: uuid,
         hours,
-        downsample: true,
         max_points: 240,
         aggregation: "avg",
         fill_empty: true,
@@ -115,7 +117,9 @@ const MiniPingChart = ({
       })
       .catch((requestError) => {
         if (!active) return;
-        setError(requestError instanceof Error ? requestError.message : "Error");
+        setError(
+          requestError instanceof Error ? requestError.message : "Error",
+        );
         setLoading(false);
       });
 
@@ -156,6 +160,10 @@ const MiniPingChart = ({
         taskId,
         name: remainingTags ? `${taskLabel} ${remainingTags}` : taskLabel,
         color: metricSeriesColor(index),
+        pointCount: (series.points ?? []).reduce(
+          (count, point) => count + (typeof point.value === "number" ? 1 : 0),
+          0,
+        ),
         tags,
       });
 
@@ -163,22 +171,38 @@ const MiniPingChart = ({
         const time = new Date(point.time).toISOString();
         const row = rows.get(time) ?? { time };
         row[dataKey] =
-          typeof point.value === "number" && point.value >= 0 ? point.value : null;
+          typeof point.value === "number" && point.value >= 0
+            ? point.value
+            : null;
         rows.set(time, row);
       }
     });
 
+    const orderedSeries = renderSeries
+      .sort((left, right) =>
+        comparePingTaskOrder(left.tags, right.tags, taskMap),
+      )
+      .map((series, index) => ({
+        ...series,
+        color: metricSeriesColor(index),
+      }));
+
     return {
       rows: Array.from(rows.values()).sort(
         (left, right) =>
-          new Date(String(left.time)).getTime() - new Date(String(right.time)).getTime(),
+          new Date(String(left.time)).getTime() -
+          new Date(String(right.time)).getTime(),
       ),
-      series: renderSeries,
+      series: orderedSeries,
     };
   }, [metricSeries, t, taskMap]);
 
   const chartData = useMemo(
-    () => applyMetricEwma(built.rows, built.series, ewmaEnabled),
+    () =>
+      trimMetricChartBoundaryRows(
+        applyMetricEwma(built.rows, built.series, ewmaEnabled),
+        built.series.map((item) => item.dataKey),
+      ),
     [built.rows, built.series, ewmaEnabled],
   );
 
@@ -189,7 +213,10 @@ const MiniPingChart = ({
     }
     return config;
   }, [built.series]);
-  const chartTicks = useMemo(() => metricChartBoundaryTicks(chartData), [chartData]);
+  const chartTicks = useMemo(
+    () => metricChartBoundaryTicks(chartData),
+    [chartData],
+  );
 
   const labelFormatter = (value: string | number) =>
     new Date(value).toLocaleString([], {
@@ -207,7 +234,7 @@ const MiniPingChart = ({
   return (
     <Card
       style={{ width, height }}
-      className="flex min-h-0 flex-col gap-2 overflow-hidden"
+      className="km-mini-ping-chart flex min-h-0 flex-col gap-2 overflow-hidden"
     >
       {loading && (
         <div className="flex min-h-0 flex-1 items-center justify-center">
@@ -249,7 +276,9 @@ const MiniPingChart = ({
                   >
                     <span
                       className="size-2 shrink-0 rounded-[2px]"
-                      style={{ backgroundColor: hidden ? "var(--gray-8)" : item.color }}
+                      style={{
+                        backgroundColor: hidden ? "var(--gray-8)" : item.color,
+                      }}
                     />
                     <span className={cn("truncate", hidden && "line-through")}>
                       {item.name}
@@ -270,11 +299,14 @@ const MiniPingChart = ({
             })}
           </div>
 
-          <ChartContainer config={chartConfig} className="min-h-0 w-full flex-1">
+          <ChartContainer
+            config={chartConfig}
+            className="km-mini-ping-chart-canvas min-h-0 h-10/12 w-full flex-1"
+          >
             <LineChart
               data={chartData}
               accessibilityLayer
-              margin={{ top: 8, right: 16, bottom: 0, left: 16 }}
+              margin={{ top: 16, right: 8, bottom: 4, left: 8 }}
             >
               <CartesianGrid vertical={false} />
               <XAxis
@@ -289,12 +321,13 @@ const MiniPingChart = ({
               <YAxis
                 tickLine={false}
                 axisLine={false}
-                unit="ms"
                 allowDecimals={false}
                 orientation="left"
                 type="number"
-                tick={{ dx: -10 }}
+                width={1}
                 mirror
+                tick={{ dx: 8 }}
+                tickFormatter={(value) => `${value}\u00a0ms`}
               />
               <ChartTooltip
                 cursor={false}
@@ -314,7 +347,7 @@ const MiniPingChart = ({
                   dataKey={item.dataKey}
                   name={item.dataKey}
                   stroke={item.color}
-                  dot={false}
+                  dot={item.pointCount <= 30}
                   isAnimationActive={false}
                   strokeWidth={2}
                   connectNulls={false}
@@ -334,7 +367,9 @@ const MiniPingChart = ({
             />
             <span className="text-sm font-medium">EWMA</span>
             <Tips mode="auto" side="top">
-              <span dangerouslySetInnerHTML={{ __html: t("chart.cutPeak_tips") }} />
+              <span
+                dangerouslySetInnerHTML={{ __html: t("chart.cutPeak_tips") }}
+              />
             </Tips>
           </div>
         </>

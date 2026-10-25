@@ -27,9 +27,7 @@ const hasTags = (tags?: MetricTags): tags is MetricTags =>
   Boolean(tags && Object.keys(tags).length > 0);
 
 export const metricTags = (value: MetricTagged): MetricTags | undefined => {
-  if (hasTags(value.tag)) return value.tag;
-  if (hasTags(value.tags)) return value.tags;
-  return value.tag ?? value.tags;
+  return value.tags;
 };
 
 export const metricTagsKey = (tags?: MetricTags) => {
@@ -62,7 +60,7 @@ export const metricSeriesColor = (index: number) => {
 export const normalizeMetricSeries = (series: MetricSeries): MetricSeries[] => {
   const seriesTags = metricTags(series);
   if (!series.points?.length) {
-    return [{ ...series, tag: seriesTags, tags: seriesTags, points: [] }];
+    return [{ ...series, tags: seriesTags, points: [] }];
   }
 
   const groups = new Map<string, { tags?: MetricTags; points: MetricPoint[] }>();
@@ -71,13 +69,12 @@ export const normalizeMetricSeries = (series: MetricSeries): MetricSeries[] => {
     const tags = hasTags(pointTags) ? pointTags : seriesTags;
     const key = metricTagsKey(tags);
     const group = groups.get(key) ?? { tags, points: [] };
-    group.points.push({ ...point, tag: tags, tags });
+    group.points.push({ ...point, tags });
     groups.set(key, group);
   }
 
   return Array.from(groups.values(), (group) => ({
     ...series,
-    tag: group.tags,
     tags: group.tags,
     count: group.points.length,
     points: group.points,
@@ -120,10 +117,64 @@ export const pingTaskName = (
   fallback: (taskId: string) => string,
 ) => tasks.get(taskId)?.name?.trim() || fallback(taskId);
 
+// Keep ping metric series aligned with the backend's ORDER BY weight ASC, id ASC.
+export const comparePingTaskOrder = (
+  leftTags: MetricTags | undefined,
+  rightTags: MetricTags | undefined,
+  tasks: ReadonlyMap<string, PublicPingTask>,
+) => {
+  const leftId = pingTaskId(leftTags);
+  const rightId = pingTaskId(rightTags);
+  const leftTask = leftId ? tasks.get(leftId) : undefined;
+  const rightTask = rightId ? tasks.get(rightId) : undefined;
+
+  if (leftTask && rightTask) {
+    const leftWeight = Number(leftTask.weight);
+    const rightWeight = Number(rightTask.weight);
+    if (Number.isFinite(leftWeight) && Number.isFinite(rightWeight)) {
+      const weightDelta = leftWeight - rightWeight;
+      if (weightDelta !== 0) return weightDelta;
+    }
+
+    const idDelta = leftTask.id - rightTask.id;
+    if (idDelta !== 0) return idDelta;
+  } else if (leftTask) {
+    return -1;
+  } else if (rightTask) {
+    return 1;
+  }
+
+  if (leftId === rightId) return 0;
+  if (!leftId) return 1;
+  if (!rightId) return -1;
+  return leftId.localeCompare(rightId, undefined, { numeric: true });
+};
+
 export const pingMetricStatKey = (entityId: string, taskId: string) =>
   `${entityId}:${taskId}`;
 
 export type MetricChartRow = Record<string, string | number | null>;
+
+export const trimMetricChartBoundaryRows = (
+  rows: MetricChartRow[],
+  dataKeys: readonly string[],
+) => {
+  if (rows.length === 0 || dataKeys.length === 0) return rows;
+
+  const hasValue = (row: MetricChartRow) =>
+    dataKeys.some((dataKey) => {
+      const value = row[dataKey];
+      return typeof value === "number" && Number.isFinite(value);
+    });
+
+  let first = 0;
+  while (first < rows.length && !hasValue(rows[first])) first += 1;
+  if (first === rows.length) return [];
+
+  let last = rows.length - 1;
+  while (last > first && !hasValue(rows[last])) last -= 1;
+  return rows.slice(first, last + 1);
+};
 
 export const metricChartBoundaryTicks = (rows: MetricChartRow[]) => {
   if (rows.length === 0) return [];

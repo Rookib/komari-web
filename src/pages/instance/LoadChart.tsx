@@ -69,9 +69,11 @@ import type {
 import {
   PING_LATENCY_METRIC,
   applyMetricEwma,
+  comparePingTaskOrder,
   formatRemainingTags,
   isPingMetric,
   metricChartBoundaryTicks,
+  trimMetricChartBoundaryRows,
   metricSeriesColor,
   metricSeriesDataKey,
   metricSeriesKey,
@@ -152,6 +154,7 @@ type RenderSeries = {
   label: string;
   color: string;
   kind: MetricKind;
+  pointCount?: number;
   unit?: string;
   yAxisId?: "left" | "right";
   tags?: Record<string, string>;
@@ -183,13 +186,17 @@ type CustomTimeRange = {
   end: string;
 };
 
+type MetricRangeParams =
+  | { hours: number }
+  | { start: string; end: string };
+
 const MAX_REALTIME_POINTS = 30 * 5;
 const HISTORY_MAX_POINTS = 700;
 const DASHBOARD_TEMPLATE_KEY = "chartDashboardTemplate";
 const CUSTOM_RANGE_DEFAULT_DAYS = 24;
 
 const AGGREGATIONS: Array<{ value: Aggregation; labelKey: string }> = [
-  { value: "avg", labelKey: "chart.sampling.average" },
+  { value: "avg", labelKey: "chart.avg" },
   { value: "min", labelKey: "chart.sampling.min" },
   { value: "max", labelKey: "chart.sampling.max" },
   { value: "first", labelKey: "chart.sampling.first" },
@@ -541,7 +548,11 @@ const buildTimeViews = (
   t: ReturnType<typeof useTranslation>["t"],
   maxMetricRetentionDays: number,
 ): TimeView[] => {
-  const views: TimeView[] = [{ key: "real-time", label: t("common.real_time") }];
+  const views: TimeView[] = [
+    { key: "real-time", label: t("common.real_time") },
+    { key: "10m", label: t("chart.minutes", { count: 10 }), hours: 10 / 60 },
+    { key: "1h", label: t("chart.hours", { count: 1 }), hours: 1 },
+  ];
   const validRetentionDays =
     Number.isFinite(maxMetricRetentionDays) && maxMetricRetentionDays > 0
       ? maxMetricRetentionDays
@@ -604,6 +615,10 @@ const buildRowsFromMetricSeries = (
         label,
         color: metricSeriesColor(index),
         kind,
+        pointCount: (series.points ?? []).reduce(
+          (count, point) => count + (typeof point.value === "number" ? 1 : 0),
+          0,
+        ),
         unit: series.unit,
         tags,
       });
@@ -786,6 +801,7 @@ const metricUnitKey = (series: RenderSeries) => {
 const prepareChartData = (
   built: BuiltChartData,
   metricOrder: string[],
+  pingTaskMap: ReadonlyMap<string, PublicPingTask>,
 ): PreparedChartData => {
   const metricPositions = new Map(
     metricOrder.map((metricKey, index) => [metricKey, index]),
@@ -795,6 +811,13 @@ const prepareChartData = (
       (metricPositions.get(left.metricKey) ?? Number.MAX_SAFE_INTEGER) -
       (metricPositions.get(right.metricKey) ?? Number.MAX_SAFE_INTEGER);
     if (positionDelta !== 0) return positionDelta;
+    if (
+      left.metricKey === right.metricKey &&
+      isPingMetric(left.metricKey)
+    ) {
+      const taskOrder = comparePingTaskOrder(left.tags, right.tags, pingTaskMap);
+      if (taskOrder !== 0) return taskOrder;
+    }
     if (left.stableKey === right.stableKey) return 0;
     return left.stableKey < right.stableKey ? -1 : 1;
   });
@@ -983,7 +1006,7 @@ const LoadChart = ({ data = [], onRealtimeActiveChange }: LoadChartProps) => {
   const [savingGlobalTemplate, setSavingGlobalTemplate] = useState(false);
   const [pingTasks, setPingTasks] = useState<PublicPingTask[]>([]);
   const [pingStats, setPingStats] = useState<PingMetricStat[]>([]);
-  const [metricData, setMetricData] = useState<QueryMetricsResponse | null>(null);
+  const [metricSeries, setMetricSeries] = useState<MetricSeries[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const chartSensors = useSensors(
@@ -1067,24 +1090,6 @@ const LoadChart = ({ data = [], onRealtimeActiveChange }: LoadChartProps) => {
     return Array.from(merged.values()).sort((a, b) => a.label.localeCompare(b.label));
   }, [definitions]);
 
-  const selectedMetricKeySignature = JSON.stringify(
-    Array.from(new Set(charts.flatMap((chart) => chart.metrics))).sort(),
-  );
-  const selectedMetricKeys = useMemo(
-    () => JSON.parse(selectedMetricKeySignature) as string[],
-    [selectedMetricKeySignature],
-  );
-
-  const realtimeFallbackMetricKeys = useMemo(
-    () =>
-      selectedMetricKeys.filter((metricKey) => {
-        const metric = fallbackCatalogMap.get(metricKey);
-        return !metric?.realtimeValue && !metric?.realtimeTaggedValues;
-      }),
-    [selectedMetricKeys],
-  );
-
-  const queriedMetricKeys = isRealtime ? realtimeFallbackMetricKeys : selectedMetricKeys;
   const customQuery = useMemo(
     () => toQueryRange(customQueryRange),
     [customQueryRange],
@@ -1097,18 +1102,31 @@ const LoadChart = ({ data = [], onRealtimeActiveChange }: LoadChartProps) => {
     queryStart && queryEnd
       ? `${queryStart}|${queryEnd}|${customQueryRevision}`
       : "";
-  const chartRangeHours =
+  const displayRangeHours =
     queryStart && queryEnd
       ? (new Date(queryEnd).getTime() - new Date(queryStart).getTime()) / 3_600_000
       : selectedView.hours;
+  const metricRangeParams = useMemo<MetricRangeParams>(
+    () =>
+      queryRangeSignature
+        ? { start: queryStart!, end: queryEnd! }
+        : { hours: queryHours ?? 1 },
+    [queryEnd, queryHours, queryRangeSignature, queryStart],
+  );
+  const metricKeys = useMemo(() => {
+    const keys = charts.flatMap((chart) =>
+      chart.metrics.filter((metricKey) => {
+        if (!isRealtime) return true;
+        const metric = fallbackCatalogMap.get(metricKey);
+        return !metric?.realtimeValue && !metric?.realtimeTaggedValues;
+      }),
+    );
+    return Array.from(new Set(keys)).sort();
+  }, [charts, isRealtime]);
 
   useEffect(() => {
-    if (
-      !uuid ||
-      (!queryHours && !queryRangeSignature) ||
-      queriedMetricKeys.length === 0
-    ) {
-      setMetricData(null);
+    if (!uuid || metricKeys.length === 0) {
+      setMetricSeries([]);
       setLoading(false);
       setError(null);
       return;
@@ -1118,20 +1136,12 @@ const LoadChart = ({ data = [], onRealtimeActiveChange }: LoadChartProps) => {
     setLoading(true);
     setError(null);
 
-    const rangeParams = queryRangeSignature
-      ? {
-          start: queryStart,
-          end: queryEnd,
-        }
-      : { hours: queryHours };
-
     call<any, QueryMetricsResponse>(
       "public:queryMetrics",
       {
-        metric_keys: queriedMetricKeys,
+        metric_keys: metricKeys,
         entity_id: uuid,
-        ...rangeParams,
-        downsample: true,
+        ...metricRangeParams,
         max_points: HISTORY_MAX_POINTS,
         aggregation,
         fill_empty: true,
@@ -1140,10 +1150,7 @@ const LoadChart = ({ data = [], onRealtimeActiveChange }: LoadChartProps) => {
     )
       .then((result) => {
         if (!active) return;
-        setMetricData({
-          ...result,
-          series: normalizeMetricSeriesList(result?.series),
-        });
+        setMetricSeries(normalizeMetricSeriesList(result?.series));
         setLoading(false);
       })
       .catch((err) => {
@@ -1158,40 +1165,30 @@ const LoadChart = ({ data = [], onRealtimeActiveChange }: LoadChartProps) => {
   }, [
     aggregation,
     call,
-    queriedMetricKeys,
-    queryEnd,
-    queryHours,
-    queryRangeSignature,
-    queryStart,
+    metricKeys,
+    metricRangeParams,
     uuid,
   ]);
 
   useEffect(() => {
-    const needsPingStats = selectedMetricKeys.some(isPingMetric);
-    if (!uuid || !needsPingStats) {
+    if (!uuid || !metricKeys.some(isPingMetric)) {
       setPingStats([]);
       return;
     }
 
     let active = true;
-    const rangeParams = queryRangeSignature
-      ? {
-          start: queryStart,
-          end: queryEnd,
-        }
-      : { hours: queryHours ?? 1 };
-
     call<any, PingMetricStatsResponse>(
       "public:getPingMetricStats",
       {
         entity_id: uuid,
-        ...rangeParams,
+        ...metricRangeParams,
         max_points: HISTORY_MAX_POINTS,
       },
       { timeout: 30000 },
     )
       .then((result) => {
-        if (active) setPingStats(Array.isArray(result?.stats) ? result.stats : []);
+        if (!active) return;
+        setPingStats(Array.isArray(result?.stats) ? result.stats : []);
       })
       .catch(() => {
         if (active) setPingStats([]);
@@ -1202,21 +1199,15 @@ const LoadChart = ({ data = [], onRealtimeActiveChange }: LoadChartProps) => {
     };
   }, [
     call,
-    queryEnd,
-    queryHours,
-    queryRangeSignature,
-    queryStart,
-    selectedMetricKeys,
+    metricKeys,
+    metricRangeParams,
     uuid,
   ]);
 
-  const pingStatsMap = useMemo(() => {
-    const map = new Map<string, PingMetricStat>();
-    for (const stat of pingStats) {
-      map.set(pingMetricStatKey(stat.entity_id, stat.task_id), stat);
-    }
-    return map;
-  }, [pingStats]);
+  const pingStatsMap = useMemo(
+    () => new Map(pingStats.map((stat) => [pingMetricStatKey(stat.entity_id, stat.task_id), stat])),
+    [pingStats],
+  );
 
   const hiddenKey = (chartId: string, series: RenderSeries) =>
     `${chartId}:${series.stableKey}`;
@@ -1360,7 +1351,7 @@ const LoadChart = ({ data = [], onRealtimeActiveChange }: LoadChartProps) => {
   const customInputMax = toDateTimeLocalValue(new Date());
 
   return (
-    <Flex direction="column" align="center" gap="4" className="w-full max-w-screen">
+    <Flex direction="column" align="center" gap="4" className="km-load-chart w-full max-w-screen">
       <div className="w-full overflow-x-auto px-2">
         <div className="w-max mx-auto">
           <SegmentedControl.Root value={selectedView.key} onValueChange={setViewKey}>
@@ -1443,7 +1434,7 @@ const LoadChart = ({ data = [], onRealtimeActiveChange }: LoadChartProps) => {
         </div>
       )}
 
-      <Card className="w-full max-w-[1100px]">
+      <Card className="km-load-chart-controls w-full max-w-[1100px]">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2 text-sm font-medium">
@@ -1531,10 +1522,11 @@ const LoadChart = ({ data = [], onRealtimeActiveChange }: LoadChartProps) => {
           items={charts.map((chart) => chart.id)}
           strategy={rectSortingStrategy}
         >
-          <div className="grid w-full max-w-[1100px] grid-cols-1 gap-3 lg:grid-cols-3">
+          <div className="km-load-chart-canvas grid w-full max-w-[1100px] grid-cols-1 gap-3 lg:grid-cols-3">
             {charts.map((chart) => {
+          const chartPingStatsMap = pingStatsMap;
           const metricBuilt = buildRowsFromMetricSeries(
-            metricData?.series ?? [],
+            metricSeries,
             chart,
             definitionMap,
             pingTaskMap,
@@ -1546,8 +1538,11 @@ const LoadChart = ({ data = [], onRealtimeActiveChange }: LoadChartProps) => {
                 metricBuilt,
               )
             : metricBuilt;
-          const built = prepareChartData(rawBuilt, chart.metrics);
-          const chartRows = applyMetricEwma(built.rows, built.series, ewmaEnabled);
+          const built = prepareChartData(rawBuilt, chart.metrics, pingTaskMap);
+          const chartRows = trimMetricChartBoundaryRows(
+            applyMetricEwma(built.rows, built.series, ewmaEnabled),
+            built.series.map((item) => item.dataKey),
+          );
           const chartTicks = metricChartBoundaryTicks(chartRows);
           const chartConfig = toChartConfig(built.series);
           const latestText = getLatestText(chartRows, built.series);
@@ -1610,7 +1605,7 @@ const LoadChart = ({ data = [], onRealtimeActiveChange }: LoadChartProps) => {
                       const taskId = pingTaskId(item.tags);
                       const stat =
                         isPingMetric(item.metricKey) && uuid && taskId
-                          ? pingStatsMap.get(pingMetricStatKey(uuid, taskId))
+                          ? chartPingStatsMap?.get(pingMetricStatKey(uuid, taskId))
                           : undefined;
                       return (
                         <div
@@ -1703,7 +1698,7 @@ const LoadChart = ({ data = [], onRealtimeActiveChange }: LoadChartProps) => {
                   <LineChart
                     data={chartRows}
                     accessibilityLayer
-                    margin={{ top: 8, right: 4, bottom: 0, left: 4 }}
+                    margin={{ top: 16, right: 8, bottom: 4, left: 8 }}
                   >
                     <CartesianGrid vertical={false} />
                     <XAxis
@@ -1723,12 +1718,17 @@ const LoadChart = ({ data = [], onRealtimeActiveChange }: LoadChartProps) => {
                         tickLine={false}
                         axisLine={false}
                         domain={axis.kind === "percent" ? [0, 100] : undefined}
-                        tickFormatter={(value) => formatValue(Number(value), axis.kind)}
+                        tickFormatter={(value) =>
+                          formatValue(Number(value), axis.kind).replace(
+                            / /g,
+                            "\u00a0",
+                          )
+                        }
                         orientation={axis.orientation}
                         type="number"
-                        tick={{ dx: axis.orientation === "left" ? 8 : -8 }}
                         width={1}
                         mirror
+                        tick={{ dx: axis.orientation === "left" ? 8 : -8 }}
                       />
                     ))}
                     <ChartTooltip
@@ -1739,7 +1739,7 @@ const LoadChart = ({ data = [], onRealtimeActiveChange }: LoadChartProps) => {
                       }}
                       content={
                         <ChartTooltipContent
-                          labelFormatter={labelFormatter(chartRangeHours)}
+                          labelFormatter={labelFormatter(displayRangeHours)}
                           indicator="dot"
                         />
                       }
@@ -1751,7 +1751,7 @@ const LoadChart = ({ data = [], onRealtimeActiveChange }: LoadChartProps) => {
                         name={item.dataKey}
                         yAxisId={item.yAxisId}
                         stroke={item.color}
-                        dot={false}
+                        dot={item.pointCount !== undefined && item.pointCount <= 30}
                         isAnimationActive={false}
                         strokeWidth={2}
                         connectNulls={false}
