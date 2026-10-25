@@ -144,13 +144,13 @@
       "nodeList": "节点列表",
       "price": "价格",
       "priceTips": "0不显示，-1表示免费",
+      "safeLinuxOnly": "Linux 安全版（amd64 / arm64）：仅支持受限 TCP 探测，已禁用远程控制和自动更新。",
       "searchByName": "查找服务器",
       "serviceName": "服务名称",
       "serviceName_placeholder": "服务名称，为空则使用默认名称(komari-agent)",
       "setToLongTerm": "设置为长期",
       "submit": "提交",
-      "submitting": "等待",
-      "safeLinuxOnly": "Linux 安全版（amd64 / arm64）：仅支持受限 TCP 探测，已禁用远程控制和自动更新。"
+      "submitting": "等待"
     },
     "notification": {
       "expire_enable": "是否启用过期提醒",
@@ -325,6 +325,7 @@
     "retry": "重试",
     "save": "保存",
     "search": "搜索",
+    "security_dashboard": "安全控制台",
     "select": "选择",
     "select_all": "全选",
     "select_clients": "选择客户端",
@@ -352,8 +353,7 @@
     "update": "更新",
     "update_available": "有新版本",
     "updated_successfully": "成功更新",
-    "weight": "权重",
-    "security_dashboard": "安全控制台"
+    "weight": "权重"
   },
   "copy_success": "已复制到剪贴板",
   "current_online": "当前在线",
@@ -801,23 +801,6 @@
       "tips": "为了避免频繁发送通知，我们设置了宽限期：</br> <b>宽限期</b>：客户端离线后，如果在这段时间内没有重新上线，就会发送离线通知",
       "title": "离线通知"
     },
-    "title": "通知",
-    "traffic_report": {
-      "batch_edit": "批量修改",
-      "daily": "日报",
-      "errors": {
-        "fetch_failed": "获取流量定时报告配置失败",
-        "save_failed": "保存流量定时报告配置失败",
-        "select_cadence": "启用流量定时报告时，至少选择一种报告周期",
-        "update_failed": "更新流量定时报告配置失败"
-      },
-      "full_title": "流量定时报告设置",
-      "monthly": "月报",
-      "report_type": "定时类型",
-      "separator": "、",
-      "title": "流量定时报告",
-      "weekly": "周报"
-    },
     "ssh_login": {
       "auth_method": "认证方式",
       "batch_edit": "批量修改",
@@ -843,6 +826,23 @@
       "whitelist_placeholder": "每行一个 IP 或 CIDR，例如：\n1.2.3.4\n1.2.3.0/24\n2001:db8::/32",
       "whitelist_tip": "白名单命中的登录会写入记录，但不会发送 Telegram/邮箱通知。",
       "whitelisted": "白名单"
+    },
+    "title": "通知",
+    "traffic_report": {
+      "batch_edit": "批量修改",
+      "daily": "日报",
+      "errors": {
+        "fetch_failed": "获取流量定时报告配置失败",
+        "save_failed": "保存流量定时报告配置失败",
+        "select_cadence": "启用流量定时报告时，至少选择一种报告周期",
+        "update_failed": "更新流量定时报告配置失败"
+      },
+      "full_title": "流量定时报告设置",
+      "monthly": "月报",
+      "report_type": "定时类型",
+      "separator": "、",
+      "title": "流量定时报告",
+      "weekly": "周报"
     }
   },
   "notificationUpgrade": {
@@ -1396,6 +1396,8 @@
     "missing_required_fields": "请填写必填字段: {{fieldNames}}",
     "notification": {
       "channel_unavailable": "当前通知渠道未注册。",
+      "configure_channel": "配置通知渠道",
+      "configure_channel_description": "选择要编辑的渠道；是否发送由上方的启用列表决定。",
       "email": {
         "host": "SMTP 服务器",
         "password": "密码",
@@ -1407,6 +1409,8 @@
       },
       "enable": "开启通知",
       "enable_description": "通过首选方式获取及时通知。",
+      "enabled_channels": "启用的通知渠道",
+      "enabled_channels_description": "可同时选择多个渠道。取消全部并保存会关闭所有通知渠道。",
       "Javascript": {
         "script": "JavaScript 代码",
         "script_help": "实现 sendMessage(message, title) 及可选的 sendEvent(event) 函数的 JavaScript 代码（部分支持 ES6）。两者均应返回 Promise 或布尔值。可用 API：fetch()、xhr()、console.log()。指南: https://komari-document.pages.dev/faq/notification-template.html"
@@ -1418,6 +1422,8 @@
       "provider_fields": "发送设置",
       "provider_fields_description": "详细设置您选择的信息发送渠道",
       "provider_settings_fetch_failed": "加载通知设置失败",
+      "ssh_auth_guard_silent_mode": "SSH 爆破告警静默模式",
+      "ssh_auth_guard_silent_mode_description": "开启后 SSH 爆破仍会检测并显示在安全控制台，但不推送到 Telegram、Email 或 Webhook。",
       "telegram": {
         "bot_token": "Telegram Bot Token",
         "chat_id": "Chat ID",
@@ -1429,13 +1435,7 @@
       "test_description": "发送测试消息",
       "test_title": "发送测试消息",
       "title": "通知",
-      "unavailable": "不可用",
-      "ssh_auth_guard_silent_mode": "SSH 爆破告警静默模式",
-      "ssh_auth_guard_silent_mode_description": "开启后 SSH 爆破仍会检测并显示在安全控制台，但不推送到 Telegram、Email 或 Webhook。",
-      "enabled_channels": "启用的通知渠道",
-      "enabled_channels_description": "可同时选择多个渠道。取消全部并保存会关闭所有通知渠道。",
-      "configure_channel": "配置通知渠道",
-      "configure_channel_description": "选择要编辑的渠道；是否发送由上方的启用列表决定。"
+      "unavailable": "不可用"
     },
     "settings_save_failed": "保存设置失败",
     "settings_saved": "设置已保存",
