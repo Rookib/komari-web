@@ -1350,7 +1350,7 @@ const NodeTable = ({
 type Platform = "linux" | "windows" | "macos" | "docker";
 
 const SAFE_AGENT_INSTALL_URL =
-  "https://raw.githubusercontent.com/suckdrygod/tcpping/main/install.sh";
+  "https://raw.githubusercontent.com/Rookib/tcpping/main/install.sh";
 
 function applyGithubProxy(url: string, ghproxy: string) {
   const proxy = ghproxy.trim();

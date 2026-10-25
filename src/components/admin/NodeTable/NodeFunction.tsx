@@ -41,7 +41,7 @@ type InstallOptions = {
 type Platform = "linux" | "windows" | "macos";
 
 const SAFE_AGENT_INSTALL_URL =
-  "https://raw.githubusercontent.com/suckdrygod/tcpping/main/install.sh";
+  "https://raw.githubusercontent.com/Rookib/tcpping/main/install.sh";
 
 export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
   const refreshTable = React.useContext(DataTableRefreshContext);
